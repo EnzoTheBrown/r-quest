@@ -1,0 +1,28 @@
+[api]
+base_url = "http://localhost:8080"
+
+[[request]]
+name       = "List users"
+method     = "GET"
+path       = "/users"
+
+[[request]]
+name       = "Get single user"
+method     = "GET"
+path       = "/users/{USER_ID}"
+
+[[request]]
+name       = "Create user"
+method     = "POST"
+path       = "/users"
+headers    = { "Content-Type" = "application/json" }
+body       = """
+{
+	"full_name": "enzo",
+	"birth_date": "1990-01-01",
+	"email": "enzo2.the@gmail.com",
+	"password": "password123",
+	"lang": "en"
+}
+"""
+
