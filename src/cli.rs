@@ -1,6 +1,13 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Context, Error, Result};
 use clap::{Parser, Subcommand};
 use dialoguer::{theme::ColorfulTheme, MultiSelect};
+use std::fs;
+use std::fs::File;
+use std::io::prelude::*;
+use std::path::PathBuf;
+use std::process::Command;
+
+const CONFIG_FILES_LOCATION: &str = "/home/enzo/.config/quest";
 
 use crate::{loader, runner};
 fn pick<'a>(all: &'a [loader::Request], keys: &[String]) -> Result<Vec<&'a loader::Request>> {
@@ -25,8 +32,8 @@ fn pick<'a>(all: &'a [loader::Request], keys: &[String]) -> Result<Vec<&'a loade
 #[derive(Parser)]
 #[command(author, version, about)]
 pub struct Cli {
-    #[arg(short, long, global = true, default_value = "test_config.toml")]
-    config: String,
+    #[arg(short, long, global = true)]
+    name: Option<String>,
     #[arg(short = 'e', long = "env-file", global = true)]
     env_file: Option<String>,
 
@@ -39,12 +46,38 @@ enum Cmd {
     List,
     Describe {
         #[arg(required = true)]
-        names: Vec<String>,
+        name: String,
     },
     Run {
-        names: Vec<String>,
+        name: String,
+        endpoint_name: String,
     },
-    Select,
+    Create {
+        #[arg(required = true)]
+        name: String,
+    },
+    Edit {
+        #[arg(required = true)]
+        name: String,
+    },
+    Delete {
+        #[arg(required = true)]
+        name: String,
+    },
+}
+
+fn get_config(name: Option<String>) -> Result<loader::Config, Error> {
+    match name {
+        Some(name) => {
+            let config_path = format!("{CONFIG_FILES_LOCATION}/{}.toml", name);
+            crate::loader::load_config(&config_path)
+        }
+        None => {
+            println!("No config file specified, using default.");
+            let default_path = format!("{CONFIG_FILES_LOCATION}/default.toml");
+            crate::loader::load_config(&default_path)
+        }
+    }
 }
 
 pub async fn handle() -> Result<()> {
@@ -55,16 +88,19 @@ pub async fn handle() -> Result<()> {
         let _ = dotenvy::dotenv();
     }
 
-    let cfg = crate::loader::load_config(&cli.config)?;
     match cli.cmd {
         Cmd::List => {
-            for (i, r) in cfg.requests.iter().enumerate() {
-                println!("{:>2}: {:<6} {}", i, r.method, r.name);
+            let paths = fs::read_dir(CONFIG_FILES_LOCATION).unwrap();
+
+            for path in paths {
+                println!("- {}", path.unwrap().path().display())
             }
         }
 
-        Cmd::Describe { names } => {
-            for r in pick(&cfg.requests, &names)? {
+        Cmd::Describe { name } => {
+            let cfg = get_config(cli.name.clone())?;
+            println!("Configuration for '{}':", name);
+            for r in &cfg.requests {
                 println!("┌─ {}", r.name);
                 println!("│ method : {}", r.method);
                 println!("│ path   : {}", r.path);
@@ -78,33 +114,59 @@ pub async fn handle() -> Result<()> {
             }
         }
 
-        Cmd::Run { names } => {
-            let targets = if names.is_empty() {
-                cfg.requests.iter().collect()
-            } else {
-                pick(&cfg.requests, &names)?
-            };
-            runner::run_requests(&cfg.api.base_url, &targets).await?;
+        Cmd::Run {
+            name,
+            endpoint_name,
+        } => {
+            let cfg = get_config(cli.name.clone())?;
+            let target = cfg.requests.iter().find(|req| req.name == endpoint_name);
+            match target {
+                Some(req) => {
+                    runner::run_single_request(&cfg.api.base_url, &req).await?;
+                }
+                None => bail!("No request named '{name}' found in the config"),
+            }
         }
 
-        Cmd::Select => {
-            let items: Vec<String> = cfg
-                .requests
-                .iter()
-                .map(|r| format!("{:<6} {}", r.method, r.name))
-                .collect();
+        Cmd::Create { name } => {
+            let mut path = PathBuf::from(CONFIG_FILES_LOCATION);
+            path.push(format!("{name}.toml"));
+            let mut file = File::create(&path)?;
+            let template = r#"[api]
+name = "{name}"
+base_url = ""
 
-            let chosen = MultiSelect::with_theme(&ColorfulTheme::default())
-                .with_prompt("Select queries to execute")
-                .items(&items)
-                .interact()?;
+[[request]]
+name = "doc"
+method = "GET"
+path = "/docs""#;
+            file.write_all(template.as_bytes())?;
 
-            if chosen.is_empty() {
-                bail!("Nothing selected – aborting.");
+            let status = Command::new("nvim").arg(&path).status()?;
+
+            if !status.success() {
+                eprintln!("Editor exited with a non-zero status");
             }
-            let targets: Vec<&loader::Request> =
-                chosen.into_iter().map(|i| &cfg.requests[i]).collect();
-            runner::run_requests(&cfg.api.base_url, &targets).await?;
+        }
+        Cmd::Edit { name } => {
+            let mut path = PathBuf::from(CONFIG_FILES_LOCATION);
+            path.push(format!("{name}.toml"));
+            let status = Command::new("nvim").arg(&path).status()?;
+
+            if !status.success() {
+                eprintln!("Editor exited with a non-zero status");
+            }
+        }
+        Cmd::Delete { name } => {
+            let mut path = PathBuf::from(CONFIG_FILES_LOCATION);
+            path.push(format!("{name}.toml"));
+            if path.exists() {
+                fs::remove_file(&path)
+                    .with_context(|| format!("removing file {}", path.display()))?;
+                println!("Deleted config file: {}", path.display());
+            } else {
+                eprintln!("Config file {} does not exist", path.display());
+            }
         }
     }
     Ok(())

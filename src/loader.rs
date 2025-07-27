@@ -26,6 +26,12 @@ pub struct Request {
 
     #[serde(default, deserialize_with = "json_string_opt")]
     pub body: Option<Value>,
+
+    #[serde(default, deserialize_with = "json_string_opt")]
+    pub params: Option<Value>,
+
+    #[serde(default, deserialize_with = "json_string_opt")]
+    pub script: Option<Value>,
 }
 
 fn json_string_opt<'de, D>(de: D) -> Result<Option<Value>, D::Error>
@@ -48,19 +54,26 @@ pub fn load_config(path: &str) -> anyhow::Result<Config> {
 }
 
 fn expand_placeholders(raw: &str) -> anyhow::Result<String> {
-    let re = Regex::new(r"\{([A-Z0-9_]+)\}")?;
+    let re = Regex::new(r"\$\{([A-Z0-9_]+)\}")?;
     let mut out = String::with_capacity(raw.len());
     let mut last = 0;
 
     for caps in re.captures_iter(raw) {
         let m = caps.get(0).unwrap();
         let key = &caps[1];
-        let val = std::env::var(key)
-            .map_err(|_| anyhow::anyhow!("Environment variable {key} is not set"))?;
+        let maybe_val = std::env::var(key);
 
-        out.push_str(&raw[last..m.start()]);
-        out.push_str(&val);
-        last = m.end();
+        if maybe_val.is_err() {
+            continue;
+        } else {
+            let val = maybe_val.unwrap();
+            if val.is_empty() {
+                continue;
+            }
+            out.push_str(&raw[last..m.start()]);
+            out.push_str(&val);
+            last = m.end();
+        }
     }
     out.push_str(&raw[last..]);
     Ok(out)

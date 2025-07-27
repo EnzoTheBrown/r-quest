@@ -1,5 +1,6 @@
 [api]
-base_url = "http://localhost:8080"
+name = "User Management API"
+description = "API for managing users"
 
 [[request]]
 name       = "List users"
@@ -9,7 +10,7 @@ path       = "/users"
 [[request]]
 name       = "Get single user"
 method     = "GET"
-path       = "/users/{USER_ID}"
+path       = "/users/${USER_ID}"
 
 [[request]]
 name       = "Create user"
@@ -25,4 +26,7 @@ body       = """
 	"lang": "en"
 }
 """
+script = """
+# language: rhai
 
+"""
