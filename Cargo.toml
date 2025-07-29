@@ -29,6 +29,5 @@ dirs = "6.0.0"
 
 
 [[bin]]
-edition = "2021"
 name = "quest"
 path = "src/main.rs"

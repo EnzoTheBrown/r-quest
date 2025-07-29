@@ -1,4 +1,4 @@
-use crate::loader::{Config, Request};
+use crate::loader::{Config, Request, Header};
 use anyhow::{Context, Result};
 use reqwest::{header::HeaderName, Client, Method};
 use rhai::serde::to_dynamic;
@@ -78,29 +78,23 @@ async fn execute(client: &Client, base_url: &str, req: &Request) -> Result<()> {
     let url = format!("{}{}", base_url, req.path);
     println!("Executing request: {}", url);
 
-    // ── 1.  HTTP verb ────────────────────────────────────────────────────────────
     let method =
         Method::from_bytes(req.method.as_bytes()).context("invalid HTTP method in config")?;
 
     let mut builder = client.request(method, &url);
 
-    // ── 2.  Headers ──────────────────────────────────────────────────────────────
     let mut content_type_form = false;
-    if let Some(hdrs) = &req.headers {
-        for (k, v) in hdrs {
-            if k.eq_ignore_ascii_case("content-type")
-                && v.eq_ignore_ascii_case("application/x-www-form-urlencoded")
-            {
-                content_type_form = true;
-            }
-            builder = builder.header(HeaderName::from_bytes(k.as_bytes())?, v);
+    for Header { key, value } in &req.headers {
+        if key.eq_ignore_ascii_case("content-type")
+            && value.eq_ignore_ascii_case("application/x-www-form-urlencoded")
+        {
+            content_type_form = true;
         }
+        builder = builder.header(HeaderName::from_bytes(key.as_bytes())?, value);
     }
 
-    // ── 3.  Body:  JSON  *or*  form‑urlencoded  ─────────────────────────────────
     if let Some(body) = &req.body {
         if content_type_form {
-            // Convert the JSON object we received into a HashMap<String, String>
             let obj = body
                 .as_object()
                 .context("form body must be a JSON object")?;
@@ -114,12 +108,10 @@ async fn execute(client: &Client, base_url: &str, req: &Request) -> Result<()> {
         }
     }
 
-    // ── 4.  Query‑string parameters (unchanged) ─────────────────────────────────
     if let Some(params) = &req.params {
         builder = builder.query(&params.as_object().unwrap_or(&serde_json::Map::new()));
     }
 
-    // ── 5.  Send & log ──────────────────────────────────────────────────────────
     let resp = builder.send().await.context("HTTP send failed")?;
     let status = resp.status();
     let text = resp
@@ -130,7 +122,6 @@ async fn execute(client: &Client, base_url: &str, req: &Request) -> Result<()> {
     println!("{} {} → {}", req.method, req.path, status);
     println!("{text}\n");
 
-    // ── 6.  Post‑processing script (unchanged) ──────────────────────────────────
     if let Some(script) = &req.script {
         run_script(script.clone(), &text).await?;
     }

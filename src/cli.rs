@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::PathBuf;
 use std::process::Command;
+use crate::loader::Header;
 
 const CONFIG_FILES_LOCATION: &str = "/home/enzo/.config/quest";
 
@@ -112,8 +113,11 @@ pub async fn handle() -> Result<()> {
                 println!("┌─ {}", r.name);
                 println!("│ method : {}", r.method);
                 println!("│ path   : {}", r.path);
-                if let Some(h) = &r.headers {
-                    println!("│ headers: {h:?}");
+                if !r.headers.is_empty() {
+                    println!("│ headers:");
+                    for Header { key, value } in &r.headers {
+                        println!("│   {}: {}", key, value);
+                    }
                 }
                 if let Some(b) = &r.body {
                     println!("│ body   : {}", serde_json::to_string_pretty(b)?);
