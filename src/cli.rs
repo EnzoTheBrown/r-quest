@@ -143,6 +143,9 @@ pub async fn handle() -> Result<()> {
         Cmd::Create { name } => {
             let mut path = PathBuf::from(CONFIG_FILES_LOCATION);
             path.push(format!("{name}.toml"));
+            if path.exists() {
+                bail!("Config file {} already exists", path.display());
+            }
             let mut file = File::create(&path)?;
             let template = r#"[api]
 name = "{name}"

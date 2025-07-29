@@ -63,13 +63,14 @@ pub fn load_config(path: &str) -> anyhow::Result<Config> {
 fn expand_placeholders(raw: &str) -> anyhow::Result<String> {
     let re = Regex::new(r"\$\{([a-zA-Z0-9_]+)\}")?;
     let mut vars = load_json_env()?;
-    println!("Loaded environment variables: {:?}", vars);
+    for (key, val) in std::env::vars() {
+        vars.insert(key, val);
+    }
 
     let mut out = String::with_capacity(raw.len());
     let mut last = 0;
 
     for caps in re.captures_iter(raw) {
-        println!("Found placeholder: {:?}", &caps[0]);
         let m = caps.get(0).unwrap();
         let key = &caps[1];
 
