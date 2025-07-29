@@ -12,6 +12,8 @@ pub struct Config {
 
 #[derive(Debug, Deserialize)]
 pub struct Api {
+    pub name: String,
+    pub description: Option<String>,
     pub base_url: String,
 }
 
@@ -30,8 +32,7 @@ pub struct Request {
     #[serde(default, deserialize_with = "json_string_opt")]
     pub params: Option<Value>,
 
-    #[serde(default, deserialize_with = "json_string_opt")]
-    pub script: Option<Value>,
+    pub script: Option<String>,
 }
 
 fn json_string_opt<'de, D>(de: D) -> Result<Option<Value>, D::Error>

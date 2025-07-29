@@ -93,13 +93,21 @@ pub async fn handle() -> Result<()> {
             let paths = fs::read_dir(CONFIG_FILES_LOCATION).unwrap();
 
             for path in paths {
+                if path.as_ref().unwrap().path().extension() != Some(std::ffi::OsStr::new("toml")) {
+                    continue;
+                }
                 println!("- {}", path.unwrap().path().display())
             }
         }
 
         Cmd::Describe { name } => {
             let cfg = get_config(cli.name.clone())?;
-            println!("Configuration for '{}':", name);
+            println!("Configuration for '{}':", cfg.api.name);
+            if let Some(desc) = &cfg.api.description {
+                println!("   {}", desc);
+            } else {
+                println!("No description provided.");
+            }
             for r in &cfg.requests {
                 println!("┌─ {}", r.name);
                 println!("│ method : {}", r.method);
