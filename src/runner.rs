@@ -1,4 +1,4 @@
-use crate::loader::{Config, Request, Header};
+use crate::loader::{Config, Header, Request};
 use anyhow::{Context, Result};
 use reqwest::{header::HeaderName, Client, Method};
 use rhai::serde::to_dynamic;
@@ -14,7 +14,7 @@ pub async fn run_config(cfg: &Config) -> Result<()> {
 
 pub async fn run_single_request(base_url: &str, request: &Request) -> Result<()> {
     let client = Client::builder()
-        .user_agent("rust-cli-httpclient/0.1")
+        .user_agent("qwest/0.1 (rust‑cli‑http)")
         .build()
         .context("building reqwest client")?;
     execute(&client, base_url, request).await?;
@@ -23,7 +23,7 @@ pub async fn run_single_request(base_url: &str, request: &Request) -> Result<()>
 
 pub async fn run_requests(base_url: &str, requests: &[&Request]) -> Result<()> {
     let client = Client::builder()
-        .user_agent("rust-cli-httpclient/0.1")
+        .user_agent("qwest/0.1 (rust‑cli‑http)")
         .build()
         .context("building reqwest client")?;
     for req in requests {
@@ -34,7 +34,7 @@ pub async fn run_requests(base_url: &str, requests: &[&Request]) -> Result<()> {
 
 fn rhai_dynamic_to_string_map(value: Dynamic) -> Result<JsonMap<String, Value>> {
     if !value.is::<RhaiMap>() {
-        return Err(anyhow::anyhow!("Expected a Rhai map at top level"));
+        return Err(anyhow::anyhow!("Expected Rhai map at top level"));
     }
     let rhai_map = value.cast::<RhaiMap>();
     let mut map = JsonMap::new();
@@ -43,7 +43,7 @@ fn rhai_dynamic_to_string_map(value: Dynamic) -> Result<JsonMap<String, Value>> 
             map.insert(k.to_string(), Value::String(v.cast::<String>()));
         } else {
             return Err(anyhow::anyhow!(
-                "Value for key '{}' is not a string",
+                "Value for key '{}' is not string",
                 k.to_string()
             ));
         }
@@ -51,22 +51,22 @@ fn rhai_dynamic_to_string_map(value: Dynamic) -> Result<JsonMap<String, Value>> 
     Ok(map)
 }
 
-pub async fn run_script(script: String, response: &str) -> Result<()> {
+pub async fn cast_spell(spell: String, response: &str) -> Result<()> {
     let parsed: Value = serde_json::from_str(response).context("HTTP body is not valid JSON")?;
     let engine = Engine::new();
     let mut scope = Scope::new();
     scope.push_dynamic("data", to_dynamic(parsed)?);
     let dynamic = engine
-        .eval_with_scope::<Dynamic>(&mut scope, &script)
+        .eval_with_scope::<Dynamic>(&mut scope, &spell)
         .map_err(|e| anyhow::anyhow!("Rhai error: {e}"))?;
     let map = rhai_dynamic_to_string_map(dynamic)?;
-    save_result_in_memomy(map).await?;
+    save_result_in_memory(map).await?;
     Ok(())
 }
 
-async fn save_result_in_memomy(result: JsonMap<String, Value>) -> Result<()> {
+async fn save_result_in_memory(result: JsonMap<String, Value>) -> Result<()> {
     let mut path = dirs::home_dir().context("cannot determine home directory")?;
-    path.push(".config/quest");
+    path.push(".config/qwest");
     fs::create_dir_all(&path)?;
     path.push("mem.json");
 
@@ -74,13 +74,13 @@ async fn save_result_in_memomy(result: JsonMap<String, Value>) -> Result<()> {
         .context("writing mem.json")?;
     Ok(())
 }
+
 async fn execute(client: &Client, base_url: &str, req: &Request) -> Result<()> {
     let url = format!("{}{}", base_url, req.path);
-    println!("Executing request: {}", url);
+    println!("Executing spell: {}", url);
 
     let method =
         Method::from_bytes(req.method.as_bytes()).context("invalid HTTP method in config")?;
-
     let mut builder = client.request(method, &url);
 
     let mut content_type_form = false;
@@ -95,9 +95,7 @@ async fn execute(client: &Client, base_url: &str, req: &Request) -> Result<()> {
 
     if let Some(body) = &req.body {
         if content_type_form {
-            let obj = body
-                .as_object()
-                .context("form body must be a JSON object")?;
+            let obj = body.as_object().context("form body must be JSON object")?;
             let form: HashMap<String, String> = obj
                 .iter()
                 .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_owned()))
@@ -122,9 +120,8 @@ async fn execute(client: &Client, base_url: &str, req: &Request) -> Result<()> {
     println!("{} {} → {}", req.method, req.path, status);
     println!("{text}\n");
 
-    if let Some(script) = &req.script {
-        run_script(script.clone(), &text).await?;
+    if let Some(spell) = &req.spell {
+        cast_spell(spell.clone(), &text).await?;
     }
-
     Ok(())
 }

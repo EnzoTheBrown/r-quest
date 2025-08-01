@@ -1,9 +1,7 @@
+use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::HashMap, fs};
-use regex::Regex;
-use std::path::PathBuf;
-
+use std::{collections::HashMap, fs, path::PathBuf};
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -40,8 +38,11 @@ pub struct Request {
     #[serde(default, deserialize_with = "json_string_opt")]
     pub params: Option<Value>,
 
-    pub script: Option<String>,
+    /// Rhai source that will be executed after the HTTP response – arcane spell!
+    #[serde(rename = "spell")]
+    pub spell: Option<String>,
 }
+
 fn json_string_opt<'de, D>(de: D) -> Result<Option<Value>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -60,6 +61,7 @@ pub fn load_config(path: &str) -> anyhow::Result<Config> {
     let expanded = expand_placeholders(&raw)?;
     Ok(toml::from_str(&expanded)?)
 }
+
 fn expand_placeholders(raw: &str) -> anyhow::Result<String> {
     let re = Regex::new(r"\$\{([a-zA-Z0-9_]+)\}")?;
     let mut vars = load_json_env()?;
@@ -69,11 +71,9 @@ fn expand_placeholders(raw: &str) -> anyhow::Result<String> {
 
     let mut out = String::with_capacity(raw.len());
     let mut last = 0;
-
     for caps in re.captures_iter(raw) {
         let m = caps.get(0).unwrap();
         let key = &caps[1];
-
         if let Some(val) = vars.get(key) {
             out.push_str(&raw[last..m.start()]);
             out.push_str(val);
@@ -86,22 +86,18 @@ fn expand_placeholders(raw: &str) -> anyhow::Result<String> {
 
 fn load_json_env() -> anyhow::Result<HashMap<String, String>> {
     let mut path = dirs::home_dir().unwrap_or(PathBuf::from("/"));
-    path.push(".config/quest/mem.json");
+    path.push(".config/qwest/mem.json");
 
     if !path.exists() {
         return Ok(HashMap::new());
     }
-
     let contents = fs::read_to_string(path)?;
     let json: Value = serde_json::from_str(&contents)?;
-
-    let map = json.as_object()
+    let map = json
+        .as_object()
         .ok_or_else(|| anyhow::anyhow!("mem.json should be a JSON object"))?
         .iter()
-        .filter_map(|(k, v)| {
-            v.as_str().map(|s| (k.clone(), s.to_string()))
-        })
+        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
         .collect();
-
     Ok(map)
 }

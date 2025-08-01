@@ -1,40 +1,23 @@
-use anyhow::{bail, Context, Error, Result};
+use crate::{consts::CONFIG_FILES_LOCATION, loader, runner};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
-use dialoguer::{theme::ColorfulTheme, MultiSelect};
-use std::fs;
-use std::fs::File;
-use std::io::prelude::*;
-use std::path::PathBuf;
-use std::process::Command;
-use crate::loader::Header;
-
-const CONFIG_FILES_LOCATION: &str = "/home/enzo/.config/quest";
-
-use crate::{loader, runner};
-fn pick<'a>(all: &'a [loader::Request], keys: &[String]) -> Result<Vec<&'a loader::Request>> {
-    let mut out = Vec::new();
-    for key in keys {
-        if let Ok(idx) = key.parse::<usize>() {
-            out.push(
-                all.get(idx)
-                    .with_context(|| format!("No request at index {idx}"))?,
-            );
-        } else {
-            out.push(
-                all.iter()
-                    .find(|r| r.name == *key)
-                    .with_context(|| format!("No request named '{key}'"))?,
-            );
-        }
-    }
-    Ok(out)
-}
+use console::{style, Emoji};
+use indicatif::{ProgressBar, ProgressStyle};
+use std::{fs, fs::File, io::Write, path::PathBuf, process::Command};
+use tabled::settings::Style as TableStyle;
+use tabled::{Table, Tabled};
 
 #[derive(Parser)]
-#[command(author, version, about)]
+#[command(
+    author,
+    version,
+    about = "🧙‍♂️  A wizardly HTTP spell‑book.  Invoke your Qwest!",
+    rename_all = "kebab_case",
+    color = clap::ColorChoice::Always
+)]
 pub struct Cli {
     #[arg(short, long, global = true)]
-    name: Option<String>,
+    book: Option<String>,
     #[arg(short = 'e', long = "env-file", global = true)]
     env_file: Option<String>,
 
@@ -44,45 +27,135 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    List,
-    Describe {
-        #[arg(required = true)]
+    ListTomes,
+    DescribeTome {
         name: String,
     },
-    Run {
+    Cast {
+        #[arg(help = "Name of the spell‑book TOML (without .toml)")]
         name: String,
-        endpoint_name: String,
+        #[arg(help = "Name of the spell (request) inside the book")]
+        spell_name: String,
     },
-    Create {
-        #[arg(required = true)]
-        name: String,
-    },
-    Edit {
-        #[arg(required = true)]
+    Scribe {
         name: String,
     },
-    Delete {
-        #[arg(required = true)]
+    Transcribe {
+        name: String,
+    },
+    Ban {
         name: String,
     },
 }
 
-fn get_config(name: Option<String>) -> Result<loader::Config, Error> {
-    match name {
-        Some(name) => {
-            let config_path = format!("{CONFIG_FILES_LOCATION}/{}.toml", name);
-            crate::loader::load_config(&config_path)
-        }
-        None => {
-            println!("No config file specified, using default.");
-            let default_path = format!("{CONFIG_FILES_LOCATION}/default.toml");
-            crate::loader::load_config(&default_path)
-        }
+fn header<S: AsRef<str>>(emoji: Emoji<'_, '_>, text: S) {
+    println!("{} {}", emoji, style(text.as_ref()).bold().cyan());
+}
+
+fn list_tomes() -> Result<()> {
+    #[derive(Tabled)]
+    struct Row {
+        #[tabled(rename = "#")]
+        idx: usize,
+        #[tabled(rename = "Spell‑Book")]
+        file: String,
     }
+
+    let files: Vec<_> = fs::read_dir(CONFIG_FILES_LOCATION)
+        .with_context(|| "reading config directory")?
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().and_then(|e| e.to_str()) == Some("toml"))
+        .collect();
+
+    if files.is_empty() {
+        println!(
+            "{}",
+            style("No spell‑books found – conjure one with `qwest scribe <name>`. ").yellow()
+        );
+        return Ok(());
+    }
+
+    let rows: Vec<Row> = files
+        .iter()
+        .enumerate()
+        .map(|(i, e)| Row {
+            idx: i + 1,
+            file: e.file_name().to_string_lossy().into(),
+        })
+        .collect();
+
+    let table = Table::new(rows).with(TableStyle::rounded()).to_string();
+    header(Emoji("📜", "[tomes]"), "Available spell‑books");
+    println!("{}", table);
+    Ok(())
+}
+
+fn print_tome(cfg: &loader::Config) -> Result<()> {
+    header(
+        Emoji("📖", "[tome]"),
+        format!("Spell‑book for '{}'", cfg.api.name),
+    );
+
+    if let Some(d) = &cfg.api.description {
+        println!("  {}", style(d).italic());
+    }
+
+    #[derive(Tabled)]
+    struct SpellRow {
+        #[tabled(rename = "#")]
+        idx: usize,
+        name: String,
+        method: String,
+        path: String,
+    }
+
+    let rows: Vec<SpellRow> = cfg
+        .requests
+        .iter()
+        .enumerate()
+        .map(|(i, r)| SpellRow {
+            idx: i + 1,
+            name: r.name.clone(),
+            method: r.method.to_string(),
+            path: r.path.clone(),
+        })
+        .collect();
+
+    let table = Table::new(rows).with(TableStyle::markdown()).to_string();
+    println!("{}", table);
+    Ok(())
+}
+
+async fn cast_spell(cfg: &loader::Config, spell: &str) -> Result<()> {
+    let req = cfg
+        .requests
+        .iter()
+        .find(|r| r.name == spell)
+        .with_context(|| format!("No spell named '{spell}'"))?;
+
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::with_template("{spinner:.green} {msg}")
+            .unwrap()
+            .tick_chars("🪄✨🔮🧙‍♀️"),
+    );
+    pb.set_message(format!("Conjuring '{}'…", req.name));
+    pb.enable_steady_tick(std::time::Duration::from_millis(120));
+
+    runner::run_single_request(&cfg.api.base_url, req).await?;
+    pb.finish_with_message("Spell resolved ✅");
+    Ok(())
+}
+
+fn load_tome(name: Option<String>) -> Result<loader::Config> {
+    let fname = name.unwrap_or_else(|| "default".into());
+    let path = format!("{}/{}.toml", CONFIG_FILES_LOCATION, fname);
+    loader::load_config(&path).with_context(|| format!("loading spell‑book '{}.toml'", fname))
 }
 
 pub async fn handle() -> Result<()> {
     let cli = Cli::parse();
+
     if let Some(path) = cli.env_file {
         dotenvy::from_path(&path).with_context(|| format!("loading env file {path}"))?;
     } else {
@@ -90,97 +163,77 @@ pub async fn handle() -> Result<()> {
     }
 
     match cli.cmd {
-        Cmd::List => {
-            let paths = fs::read_dir(CONFIG_FILES_LOCATION).unwrap();
-
-            for path in paths {
-                if path.as_ref().unwrap().path().extension() != Some(std::ffi::OsStr::new("toml")) {
-                    continue;
-                }
-                println!("- {}", path.unwrap().path().display())
+        Cmd::ListTomes => list_tomes()?,
+        Cmd::DescribeTome { name } => {
+            let cfg = load_tome(cli.book)?;
+            if cfg.api.name != name {
+                println!(
+                    "{}",
+                    style("Warning: requested name does not match book's api.name").yellow()
+                );
             }
+            print_tome(&cfg)?;
         }
-
-        Cmd::Describe { name } => {
-            let cfg = get_config(cli.name.clone())?;
-            println!("Configuration for '{}':", cfg.api.name);
-            if let Some(desc) = &cfg.api.description {
-                println!("   {}", desc);
-            } else {
-                println!("No description provided.");
-            }
-            for r in &cfg.requests {
-                println!("┌─ {}", r.name);
-                println!("│ method : {}", r.method);
-                println!("│ path   : {}", r.path);
-                if !r.headers.is_empty() {
-                    println!("│ headers:");
-                    for Header { key, value } in &r.headers {
-                        println!("│   {}: {}", key, value);
-                    }
-                }
-                if let Some(b) = &r.body {
-                    println!("│ body   : {}", serde_json::to_string_pretty(b)?);
-                }
-                println!("└──────────────────────────────\n");
-            }
+        Cmd::Cast { name, spell_name } => {
+            let cfg = load_tome(Some(name))?;
+            cast_spell(&cfg, &spell_name).await?;
         }
-
-        Cmd::Run {
-            name,
-            endpoint_name,
-        } => {
-            let cfg = get_config(cli.name.clone())?;
-            let target = cfg.requests.iter().find(|req| req.name == endpoint_name);
-            match target {
-                Some(req) => {
-                    runner::run_single_request(&cfg.api.base_url, &req).await?;
-                }
-                None => bail!("No request named '{name}' found in the config"),
-            }
-        }
-
-        Cmd::Create { name } => {
+        Cmd::Scribe { name } => {
             let mut path = PathBuf::from(CONFIG_FILES_LOCATION);
             path.push(format!("{name}.toml"));
             if path.exists() {
-                bail!("Config file {} already exists", path.display());
+                bail!("Spell‑book {} already exists", path.display());
             }
+
             let mut file = File::create(&path)?;
-            let template = r#"[api]
+            let template = format!(
+                r#"# By decree of the Arcane Council this spell‑book belongs to $(USER)
+[api]
 name = "{name}"
 base_url = ""
 
-[[request]]
-name = "doc"
+[[requests]]
+name   = "docs"
 method = "GET"
-path = "/docs""#;
+path   = "/docs"
+"#,
+                name = name
+            );
             file.write_all(template.as_bytes())?;
 
-            let status = Command::new("nvim").arg(&path).status()?;
-
+            header(
+                Emoji("✨", "[scribe]"),
+                "Spell‑book conjured – opening $EDITOR",
+            );
+            let status = Command::new(std::env::var("EDITOR").unwrap_or_else(|_| "nvim".into()))
+                .arg(&path)
+                .status()?;
             if !status.success() {
-                eprintln!("Editor exited with a non-zero status");
+                eprintln!(
+                    "{}",
+                    style("Editor exited with non‑zero status – tome is saved though.").red()
+                );
             }
         }
-        Cmd::Edit { name } => {
+        Cmd::Transcribe { name } => {
             let mut path = PathBuf::from(CONFIG_FILES_LOCATION);
             path.push(format!("{name}.toml"));
-            let status = Command::new("nvim").arg(&path).status()?;
-
+            let status = Command::new(std::env::var("EDITOR").unwrap_or_else(|_| "nvim".into()))
+                .arg(&path)
+                .status()?;
             if !status.success() {
-                eprintln!("Editor exited with a non-zero status");
+                eprintln!("{}", style("Editor exited with non‑zero status").red());
             }
         }
-        Cmd::Delete { name } => {
+        Cmd::Ban { name } => {
             let mut path = PathBuf::from(CONFIG_FILES_LOCATION);
             path.push(format!("{name}.toml"));
             if path.exists() {
                 fs::remove_file(&path)
-                    .with_context(|| format!("removing file {}", path.display()))?;
-                println!("Deleted config file: {}", path.display());
+                    .with_context(|| format!("banishing file {}", path.display()))?;
+                println!("{}", style(format!("Banished {}", path.display())).red());
             } else {
-                eprintln!("Config file {} does not exist", path.display());
+                eprintln!("{} does not exist", path.display());
             }
         }
     }
