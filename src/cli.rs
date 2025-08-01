@@ -27,23 +27,23 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    ListTomes,
-    DescribeTome {
+    List,
+    Describe {
         name: String,
     },
-    Cast {
+    Run {
         #[arg(help = "Name of the spell‑book TOML (without .toml)")]
         name: String,
         #[arg(help = "Name of the spell (request) inside the book")]
         spell_name: String,
     },
-    Scribe {
+    Create {
         name: String,
     },
-    Transcribe {
+    Edit {
         name: String,
     },
-    Ban {
+    Delete {
         name: String,
     },
 }
@@ -163,8 +163,8 @@ pub async fn handle() -> Result<()> {
     }
 
     match cli.cmd {
-        Cmd::ListTomes => list_tomes()?,
-        Cmd::DescribeTome { name } => {
+        Cmd::List => list_tomes()?,
+        Cmd::Describe { name } => {
             let cfg = load_tome(cli.book)?;
             if cfg.api.name != name {
                 println!(
@@ -174,11 +174,11 @@ pub async fn handle() -> Result<()> {
             }
             print_tome(&cfg)?;
         }
-        Cmd::Cast { name, spell_name } => {
+        Cmd::Run { name, spell_name } => {
             let cfg = load_tome(Some(name))?;
             cast_spell(&cfg, &spell_name).await?;
         }
-        Cmd::Scribe { name } => {
+        Cmd::Create { name } => {
             let mut path = PathBuf::from(CONFIG_FILES_LOCATION);
             path.push(format!("{name}.toml"));
             if path.exists() {
@@ -215,7 +215,7 @@ path   = "/docs"
                 );
             }
         }
-        Cmd::Transcribe { name } => {
+        Cmd::Edit { name } => {
             let mut path = PathBuf::from(CONFIG_FILES_LOCATION);
             path.push(format!("{name}.toml"));
             let status = Command::new(std::env::var("EDITOR").unwrap_or_else(|_| "nvim".into()))
@@ -225,7 +225,7 @@ path   = "/docs"
                 eprintln!("{}", style("Editor exited with non‑zero status").red());
             }
         }
-        Cmd::Ban { name } => {
+        Cmd::Delete { name } => {
             let mut path = PathBuf::from(CONFIG_FILES_LOCATION);
             path.push(format!("{name}.toml"));
             if path.exists() {
