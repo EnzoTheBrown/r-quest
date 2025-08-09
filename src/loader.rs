@@ -15,6 +15,10 @@ pub struct Api {
     pub name: String,
     pub description: Option<String>,
     pub base_url: String,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub follow_redirects: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,8 +41,10 @@ pub struct Request {
 
     #[serde(default, deserialize_with = "json_string_opt")]
     pub params: Option<Value>,
-
-    /// Rhai source that will be executed after the HTTP response – arcane spell!
+    #[serde(default, rename = "pre_script")]
+    pub pre_script: Option<String>,
+    #[serde(default, rename = "test_script")]
+    pub test_script: Option<String>,
     #[serde(rename = "spell")]
     pub spell: Option<String>,
 }
@@ -56,19 +62,14 @@ where
     }
 }
 
-pub fn load_config(path: &str) -> anyhow::Result<Config> {
+pub fn load_config(path: &str, vars: HashMap<String, String>) -> anyhow::Result<Config> {
     let raw = fs::read_to_string(path)?;
-    let expanded = expand_placeholders(&raw)?;
+    let expanded = expand_placeholders(&raw, vars)?;
     Ok(toml::from_str(&expanded)?)
 }
 
-fn expand_placeholders(raw: &str) -> anyhow::Result<String> {
+fn expand_placeholders(raw: &str, vars: HashMap<String, String>) -> anyhow::Result<String> {
     let re = Regex::new(r"\$\{([a-zA-Z0-9_]+)\}")?;
-    let mut vars = load_json_env()?;
-    for (key, val) in std::env::vars() {
-        vars.insert(key, val);
-    }
-
     let mut out = String::with_capacity(raw.len());
     let mut last = 0;
     for caps in re.captures_iter(raw) {
@@ -82,22 +83,4 @@ fn expand_placeholders(raw: &str) -> anyhow::Result<String> {
     }
     out.push_str(&raw[last..]);
     Ok(out)
-}
-
-fn load_json_env() -> anyhow::Result<HashMap<String, String>> {
-    let mut path = dirs::home_dir().unwrap_or(PathBuf::from("/"));
-    path.push(".config/qwest/mem.json");
-
-    if !path.exists() {
-        return Ok(HashMap::new());
-    }
-    let contents = fs::read_to_string(path)?;
-    let json: Value = serde_json::from_str(&contents)?;
-    let map = json
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("mem.json should be a JSON object"))?
-        .iter()
-        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-        .collect();
-    Ok(map)
 }
